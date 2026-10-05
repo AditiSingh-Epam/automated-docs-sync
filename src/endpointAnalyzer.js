@@ -3,11 +3,20 @@ const parser = require('@babel/parser');
 const traverse = require('@babel/traverse').default;
 
 const SUPPORTED_METHODS = new Set(['get', 'post', 'put', 'delete', 'patch']);
+const OTHER_HTTP_METHODS = new Set(['all', 'connect', 'head', 'options', 'trace']);
 
-function nodeComments(node) {
-  return node && node.leadingComments
-    ? node.leadingComments.filter((comment) => comment.type === 'CommentBlock' && comment.value.startsWith('*'))
-    : [];
+function associatedJSDoc(node, source) {
+  if (!node || !node.leadingComments) {
+    return null;
+  }
+  const jsdoc = node.leadingComments
+    .filter((comment) => (
+      comment.type === 'CommentBlock'
+      && comment.value.startsWith('*')
+      && source.slice(comment.end, node.start).trim() === ''
+    ))
+    .pop();
+  return jsdoc ? jsdoc.value : null;
 }
 
 function functionName(node) {
@@ -41,7 +50,8 @@ function analyzeFile(filePath, sourceText) {
     } catch (error) {
       return {
         endpoints: [],
-        warnings: [`Cannot read source file "${filePath}": ${error.message}`]
+        warnings: [`Cannot read source file "${filePath}": ${error.message}`],
+        unsupportedPatterns: []
       };
     }
   }
@@ -56,7 +66,8 @@ function analyzeFile(filePath, sourceText) {
   } catch (error) {
     return {
       endpoints: [],
-      warnings: [`Cannot parse "${filePath}" at line ${error.loc ? error.loc.line : '?'}: ${error.message}`]
+      warnings: [`Cannot parse "${filePath}" at line ${error.loc ? error.loc.line : '?'}: ${error.message}`],
+      unsupportedPatterns: []
     };
   }
 
@@ -66,7 +77,7 @@ function analyzeFile(filePath, sourceText) {
       if (path.node.id) {
         declarations.set(path.node.id.name, {
           node: path.node,
-          comments: nodeComments(path.node)
+          jsdoc: associatedJSDoc(path.node, source)
         });
       }
     },
@@ -75,10 +86,8 @@ function analyzeFile(filePath, sourceText) {
         && ['ArrowFunctionExpression', 'FunctionExpression'].includes(path.node.init && path.node.init.type)) {
         declarations.set(path.node.id.name, {
           node: path.node.init,
-          comments: [
-            ...nodeComments(path.node),
-            ...nodeComments(path.parentPath.node)
-          ]
+          jsdoc: associatedJSDoc(path.node, source)
+            || associatedJSDoc(path.parentPath.node, source)
         });
       }
     }
@@ -86,22 +95,50 @@ function analyzeFile(filePath, sourceText) {
 
   const endpoints = [];
   const warnings = [];
+  const unsupportedPatterns = [];
   traverse(ast, {
     CallExpression(callPath) {
       const { callee } = callPath.node;
       if (callee.type !== 'MemberExpression'
-        || callee.computed
         || callee.object.type !== 'Identifier'
-        || !['app', 'router'].includes(callee.object.name)
-        || callee.property.type !== 'Identifier'
-        || !SUPPORTED_METHODS.has(callee.property.name.toLowerCase())) {
+        || !['app', 'router'].includes(callee.object.name)) {
         return;
       }
 
-      const method = callee.property.name.toUpperCase();
+      const methodName = !callee.computed && callee.property.type === 'Identifier'
+        ? callee.property.name.toLowerCase()
+        : null;
+      if (!methodName || !SUPPORTED_METHODS.has(methodName)) {
+        if (callee.computed || methodName === 'route' || OTHER_HTTP_METHODS.has(methodName)) {
+          const location = callPath.node.loc.start;
+          const unsupported = {
+            type: OTHER_HTTP_METHODS.has(methodName) ? 'unsupportedHttpMethod' : 'unsupportedRouteRegistration',
+            filePath,
+            line: location.line,
+            method: methodName ? methodName.toUpperCase() : 'dynamic',
+            description: OTHER_HTTP_METHODS.has(methodName)
+              ? `Unsupported ${methodName.toUpperCase()} method is not inventoried in Phase 1.`
+              : 'Computed or unsupported route registration is not inventoried in Phase 1.'
+          };
+          unsupportedPatterns.push(unsupported);
+          warnings.push(`${unsupported.description} in "${filePath}" at line ${location.line}`);
+        }
+        return;
+      }
+
+      const method = methodName.toUpperCase();
       const routePath = staticRoutePath(callPath.node.arguments[0]);
       if (routePath === null) {
-        warnings.push(`Unsupported dynamic ${method} route in "${filePath}" at line ${callPath.node.loc.start.line}`);
+        const location = callPath.node.loc.start;
+        const unsupported = {
+          type: 'dynamicRoute',
+          filePath,
+          line: location.line,
+          method,
+          description: `Unsupported dynamic ${method} route.`
+        };
+        unsupportedPatterns.push(unsupported);
+        warnings.push(`${unsupported.description} in "${filePath}" at line ${location.line}`);
         return;
       }
 
@@ -115,13 +152,11 @@ function analyzeFile(filePath, sourceText) {
       const handler = handlerNode && handlerNode.type === 'Identifier'
         ? handlerNode.name
         : functionName(handlerNode);
-      const comments = [
-        ...(declaration ? declaration.comments : []),
-        ...nodeComments(resolvedHandler),
-        ...nodeComments(handlerNode),
-        ...nodeComments(callPath.node)
-      ];
-      const jsdoc = comments.length ? comments[0].value : null;
+      const jsdoc = (declaration && declaration.jsdoc)
+        || associatedJSDoc(resolvedHandler, source)
+        || associatedJSDoc(handlerNode, source)
+        || associatedJSDoc(callPath.node, source)
+        || associatedJSDoc(callPath.parentPath.node, source);
       const location = callPath.node.loc.start;
 
       endpoints.push({
@@ -136,18 +171,20 @@ function analyzeFile(filePath, sourceText) {
     }
   });
 
-  return { endpoints, warnings };
+  return { endpoints, warnings, unsupportedPatterns };
 }
 
 function analyzeFiles(filePaths) {
   const endpoints = [];
   const warnings = [];
+  const unsupportedPatterns = [];
   filePaths.forEach((filePath) => {
     const result = analyzeFile(filePath);
     endpoints.push(...result.endpoints);
     warnings.push(...result.warnings);
+    unsupportedPatterns.push(...result.unsupportedPatterns);
   });
-  return { endpoints, warnings };
+  return { endpoints, warnings, unsupportedPatterns };
 }
 
 module.exports = {

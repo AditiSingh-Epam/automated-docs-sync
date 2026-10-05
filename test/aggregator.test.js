@@ -38,7 +38,40 @@ describe('endpoint aggregator', () => {
       method: 'GET',
       path: '/users',
       status: 'partial',
-      gaps: ['methodMismatch', 'pathMismatch']
+      gaps: ['methodMismatch', 'pathMismatch'],
+      gapDetails: {
+        missingFields: [],
+        invalidTags: [],
+        tagMismatch: [
+          { field: 'method', documented: 'POST', actual: 'GET' },
+          { field: 'path', documented: '/other', actual: '/users' }
+        ]
+      }
+    });
+  });
+
+  test('records missing fields and invalid tags in explicit gap details', () => {
+    const [undocumented, invalid] = aggregateEndpoints([
+      { ...route },
+      {
+        ...route,
+        documentation: {
+          present: true,
+          method: null,
+          path: null,
+          summary: '',
+          params: [],
+          returns: null,
+          invalidTags: ['@unknown value'],
+          gaps: ['summary', 'invalidTags']
+        }
+      }
+    ]);
+    expect(undocumented.gapDetails.missingFields).toEqual(['jsdoc', 'summary']);
+    expect(invalid.gapDetails).toEqual({
+      missingFields: ['summary'],
+      invalidTags: ['@unknown value'],
+      tagMismatch: []
     });
   });
 });

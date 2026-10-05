@@ -16,13 +16,13 @@ npm install
 node src/cli.js --input ./src --output ./docs/api-reference.md --report ./docs/api-coverage.json
 ```
 
-The input must be an existing directory, and the parent directories for both output files must already exist. The CLI exits non-zero for invalid arguments and fatal input/output errors. Incomplete documentation, unsupported dynamic paths, and malformed source files are reported as warnings while other files continue to be processed.
+The input must be an existing directory, and the parent directories for both output files must already exist. The CLI exits non-zero for invalid arguments and fatal input/output errors. Output paths that resolve to discovered source files are rejected to prevent overwriting source code. Incomplete documentation, unsupported route patterns, and malformed source files are reported as warnings while other files continue to be processed. The CLI distinguishes `SUCCESS` from `SUCCESS_WITH_WARNINGS`; either status exits zero, while fatal errors exit non-zero.
 
 Run quality checks with `npm test`, `npm run test:coverage`, and `npm run lint`.
 
 ## Supported routes and JSDoc
 
-Phase 1 recognizes static calls of the form `app.get(path, handler)` and `router.get(path, handler)` for GET, POST, PUT, DELETE, and PATCH. Static quoted paths and template literals without interpolation are supported. Dynamic/computed paths and other registration APIs (including `app.route()`) are not inventoried. Only `.js` files are scanned; `node_modules`, `.git`, `coverage`, `vendor`, and hidden JavaScript files are skipped.
+Phase 1 recognizes static calls of the form `app.get(path, handler)` and `router.get(path, handler)` for GET, POST, PUT, DELETE, and PATCH. Static quoted paths and template literals without interpolation are supported. Dynamic/computed paths, other HTTP methods (such as OPTIONS and HEAD), and other registration APIs (including `app.route()`) are not inventoried; recognizable unsupported patterns are listed in the JSON report. Only `.js` files are scanned; `node_modules`, `.git`, `coverage`, `vendor`, and hidden JavaScript files are skipped.
 
 Put a JSDoc block immediately above a named handler or inline route call:
 
@@ -41,7 +41,19 @@ function getUser(req, res) {
 app.get('/users/:id', getUser);
 ```
 
-The registered route and method are authoritative; `@method` and `@path` are extracted and reported as gaps when they conflict. A route is counted as documented when it has an associated JSDoc summary and no malformed tags or route-tag conflicts. Parameter and return tags are optional. Endpoints without JSDoc are `missing`; those with incomplete or conflicting JSDoc are `partial`. Both partial and missing endpoints count toward `notDocumented` for coverage.
+The registered route and method are authoritative; `@method` and `@path` are extracted and reported as gaps when they conflict. JSDoc is associated with the specific named handler declaration or inline route registration when the comment directly precedes that node; unrelated or distant comments are not attributed to a route.
+
+### Documentation status and coverage
+
+A route is `documented` when it has an associated JSDoc summary and no malformed tags or route-tag conflicts. Parameter and return tags are optional. Missing JSDoc or summary is listed in `gapDetails.missingFields`; malformed tags and method/path conflicts are provided in `gapDetails.invalidTags` and `gapDetails.tagMismatch`. The legacy `gaps` array remains available with concise reason codes.
+
+Endpoints without JSDoc are `missing`; those with incomplete or conflicting JSDoc are `partial`. Both partial and missing endpoints count toward `notDocumented` and are excluded from coverage:
+
+```text
+Coverage = (Fully Documented Endpoints / Total Endpoints) * 100
+```
+
+When no endpoints are discovered, coverage is 0%. The JSON report also includes `partial`, `missing`, `warningCount`, `status`, and structured `unsupportedPatterns`.
 
 ## Output examples
 
@@ -63,10 +75,16 @@ The JSON report includes aggregate coverage and endpoint-level gaps:
 
 ```json
 {
+  "status": "SUCCESS",
   "totalEndpoints": 1,
   "documented": 1,
+  "partial": 0,
+  "missing": 0,
   "notDocumented": 0,
   "coverage": 100,
+  "warningCount": 0,
+  "unsupportedPatternsCount": 0,
+  "unsupportedPatterns": [],
   "timestamp": "2026-01-01T00:00:00.000Z",
   "endpoints": [
     {
@@ -77,10 +95,19 @@ The JSON report includes aggregate coverage and endpoint-level gaps:
       "filePath": "routes.js",
       "line": 12,
       "status": "documented",
-      "gaps": []
+      "gaps": [],
+      "gapDetails": {
+        "missingFields": [],
+        "invalidTags": [],
+        "tagMismatch": []
+      }
     }
   ]
 }
 ```
 
-Both outputs share the same ISO 8601 UTC timestamp. A scan with no routes reports 0% coverage. Generated output redacts common secret-looking patterns, including credential assignments, bearer tokens, and AWS access-key identifiers. This heuristic is not a guarantee that all sensitive data can be detected, so avoid putting secrets in source comments.
+Both outputs share the same ISO 8601 UTC timestamp. A scan with no routes reports 0% coverage.
+
+## Security and secret handling
+
+Generated output redacts a limited set of common secret-like patterns, including assignments labeled `password`, `secret`, `api_key`, `access_token`, or `client_secret`, bearer tokens, and AWS access-key identifiers. This detection is best-effort only: it may miss custom formats, encoded values, and other sensitive content, and must not be treated as a security boundary. Do not put real credentials in JSDoc comments; use placeholders and review generated artifacts before sharing or committing them. For CI or shared environments, use a dedicated secret-scanning tool as an additional control.

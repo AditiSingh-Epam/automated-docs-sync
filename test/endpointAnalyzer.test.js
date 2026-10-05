@@ -25,16 +25,20 @@ app.patch('/users/:id', (req, res) => {});
     const dynamic = analyzeFile('dynamic.js', 'app.get(`/users/${id}`, handler);');
     expect(dynamic.endpoints).toEqual([]);
     expect(dynamic.warnings[0]).toContain('Unsupported dynamic GET route');
+    expect(dynamic.unsupportedPatterns).toMatchObject([
+      { type: 'dynamicRoute', filePath: 'dynamic.js', method: 'GET', line: 1 }
+    ]);
 
     const malformed = analyzeFile('broken.js', 'app.get(');
     expect(malformed.endpoints).toEqual([]);
     expect(malformed.warnings[0]).toContain('Cannot parse "broken.js"');
+    expect(malformed.unsupportedPatterns).toEqual([]);
   });
 
   test('handles read failures and combines analysis across files', () => {
     expect(analyzeFile('missing.js').warnings[0]).toContain('Cannot read source file');
     const combined = analyzeFiles([]);
-    expect(combined).toEqual({ endpoints: [], warnings: [] });
+    expect(combined).toEqual({ endpoints: [], warnings: [], unsupportedPatterns: [] });
   });
 
   test('normalizes supported route strings and rejects computed paths', () => {
@@ -45,5 +49,42 @@ app.patch('/users/:id', (req, res) => {});
       quasis: [{ value: { cooked: '/items' } }]
     })).toBe('/items');
     expect(staticRoutePath({ type: 'Identifier', name: 'route' })).toBeNull();
+  });
+
+  test('associates JSDoc only with its handler declaration or inline route call', () => {
+    const source = `/**
+ * Correct handler documentation.
+ */
+const getUsers = (req, res) => {};
+app.get('/users', getUsers);
+
+/**
+ * Documentation for a different helper.
+ */
+function helper() {}
+
+
+
+app.get('/anonymous', (req, res) => {});
+
+/**
+ * Inline route documentation.
+ */
+app.get('/inline', (req, res) => {});
+`;
+    const result = analyzeFile('routes.js', source);
+    expect(result.endpoints[0].jsdoc).toContain('Correct handler documentation.');
+    expect(result.endpoints[1].jsdoc).toBeNull();
+    expect(result.endpoints[2].jsdoc).toContain('Inline route documentation.');
+  });
+
+  test('captures computed and app.route registrations as structured unsupported patterns', () => {
+    const result = analyzeFile('routes.js', "app[method]('/users', handler); app.route('/users'); app.options('/users', handler);");
+    expect(result.unsupportedPatterns.map(({ type }) => type)).toEqual([
+      'unsupportedRouteRegistration',
+      'unsupportedRouteRegistration',
+      'unsupportedHttpMethod'
+    ]);
+    expect(result.warnings).toHaveLength(3);
   });
 });

@@ -54,6 +54,8 @@ function runCli(argv, output = console) {
     const result = sync(options);
     result.warnings.forEach((warning) => output.warn(`Warning: ${warning}`));
     output.log(`Scanned ${result.report.totalEndpoints} endpoints; coverage ${result.report.coverage}%.`);
+    output.log(`Documentation: ${result.summary.documentedEndpoints} documented, ${result.summary.partialEndpoints} partial, ${result.summary.missingDocumentation} missing.`);
+    output.log(`Status: ${result.status} (${result.warningCount} warning${result.warningCount === 1 ? '' : 's'}).`);
     return 0;
   } catch (error) {
     output.error(`Error: ${error.message}`);

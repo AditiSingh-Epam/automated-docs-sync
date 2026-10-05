@@ -46,6 +46,16 @@ app.delete('/users/:id', (req, res) => {});
     expect(report.timestamp).toBe('2026-01-01T00:00:00.000Z');
     expect(report.endpoints.map((endpoint) => endpoint.status)).toEqual(['documented', 'missing']);
     expect(result.warnings).toHaveLength(1);
+    expect(result.status).toBe('SUCCESS_WITH_WARNINGS');
+    expect(result.warningCount).toBe(1);
+    expect(report.status).toBe('SUCCESS_WITH_WARNINGS');
+    expect(result.summary).toMatchObject({
+      endpointsDiscovered: 2,
+      documentedEndpoints: 1,
+      partialEndpoints: 0,
+      missingDocumentation: 1,
+      coverage: 50
+    });
   });
 
   test('validates CLI arguments and reports help without running the pipeline', () => {
@@ -77,6 +87,8 @@ app.delete('/users/:id', (req, res) => {});
     expect(code).toBe(0);
     expect(output.warn).toHaveBeenCalledWith(expect.stringContaining('Missing documentation'));
     expect(output.log).toHaveBeenCalledWith(expect.stringContaining('coverage 0%'));
+    expect(output.log).toHaveBeenCalledWith(expect.stringContaining('0 documented, 0 partial, 1 missing'));
+    expect(output.log).toHaveBeenCalledWith(expect.stringContaining('SUCCESS_WITH_WARNINGS'));
 
     expect(() => validateOutputPath(path.join(root, 'missing', 'out.md'), '--output')).toThrow('Cannot access');
     expect(() => sync({
@@ -119,5 +131,56 @@ app.delete('/users/:id', (req, res) => {});
     const destination = path.join(root, 'written.txt');
     writeOutput(destination, 'written');
     expect(fs.readFileSync(destination, 'utf8')).toBe('written');
+  });
+
+  test('prevents Markdown and JSON outputs from overwriting discovered source files', () => {
+    const sourcePath = path.join(root, 'api', 'routes.js');
+    const source = 'app.get("/safe", (req, res) => {});';
+    fs.writeFileSync(sourcePath, source);
+
+    expect(() => sync({
+      input: path.join(root, 'api'),
+      output: sourcePath,
+      report: path.join(root, 'report.json')
+    })).toThrow('Markdown output path collides with an input file');
+    expect(fs.readFileSync(sourcePath, 'utf8')).toBe(source);
+
+    expect(() => sync({
+      input: path.join(root, 'api'),
+      output: path.join(root, 'api.md'),
+      report: sourcePath
+    })).toThrow('JSON report path collides with an input file');
+    expect(fs.readFileSync(sourcePath, 'utf8')).toBe(source);
+  });
+
+  test('reports clean runs distinctly from runs with warnings', () => {
+    fs.writeFileSync(path.join(root, 'api', 'routes.js'), `/**
+ * Health check.
+ */
+app.get('/health', handler);
+`);
+    const result = sync({
+      input: path.join(root, 'api'),
+      output: path.join(root, 'clean.md'),
+      report: path.join(root, 'clean.json')
+    });
+    expect(result.status).toBe('SUCCESS');
+    expect(result.warningCount).toBe(0);
+    expect(result.report.status).toBe('SUCCESS');
+  });
+
+  test('includes unsupported routes in the generated report', () => {
+    fs.writeFileSync(path.join(root, 'api', 'routes.js'), 'app.get(`/users/${id}`, handler);');
+    const result = sync({
+      input: path.join(root, 'api'),
+      output: path.join(root, 'unsupported.md'),
+      report: path.join(root, 'unsupported.json')
+    });
+    expect(result.report.unsupportedPatternsCount).toBe(1);
+    expect(result.report.unsupportedPatterns[0]).toMatchObject({
+      type: 'dynamicRoute',
+      method: 'GET',
+      line: 1
+    });
   });
 });

@@ -6,7 +6,7 @@ const { discoverFiles } = require('./fileDiscovery');
 const { extractJSDoc } = require('./jsdocExtractor');
 const { generateMarkdown } = require('./markdownGenerator');
 const { generateReport } = require('./reportGenerator');
-const { createTimestamp, writeOutput } = require('./utils');
+const { checkOutputCollisions, createTimestamp, writeOutput } = require('./utils');
 
 function validateOutputPath(outputPath, label) {
   if (typeof outputPath !== 'string' || outputPath.trim() === '') {
@@ -41,6 +41,7 @@ function sync(options) {
 
   const timestamp = options.timestamp || createTimestamp();
   const discovery = discoverFiles(options.input);
+  checkOutputCollisions(markdownPath, reportPath, discovery.files);
   const analysis = analyzeFiles(discovery.files);
   const documentedEndpoints = analysis.endpoints.map((endpoint) => ({
     ...endpoint,
@@ -56,7 +57,11 @@ function sync(options) {
   });
 
   const markdown = generateMarkdown(endpoints, timestamp);
-  const report = generateReport(endpoints, timestamp);
+  const status = warnings.length > 0 ? 'SUCCESS_WITH_WARNINGS' : 'SUCCESS';
+  const report = generateReport(endpoints, timestamp, {
+    warningCount: warnings.length,
+    unsupportedPatterns: analysis.unsupportedPatterns
+  });
   writeOutput(markdownPath, markdown);
   writeOutput(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 
@@ -65,6 +70,15 @@ function sync(options) {
     report,
     timestamp,
     warnings,
+    warningCount: warnings.length,
+    status,
+    summary: {
+      endpointsDiscovered: endpoints.length,
+      documentedEndpoints: endpoints.filter((endpoint) => endpoint.status === 'documented').length,
+      partialEndpoints: endpoints.filter((endpoint) => endpoint.status === 'partial').length,
+      missingDocumentation: endpoints.filter((endpoint) => endpoint.status === 'missing').length,
+      coverage: report.coverage
+    },
     output: markdownPath,
     reportPath
   };
