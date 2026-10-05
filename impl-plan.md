@@ -46,6 +46,8 @@ The plan stays aligned with the approved architecture:
   - [ ] The CLI emits warnings for non-fatal issues and still continues processing when possible.
   - [ ] Exit codes match the design: successful run returns 0; fatal CLI/filesystem failures return non-zero.
   - [ ] Unit tests cover valid invocation, invalid arguments, missing input directory, and output write failures.
+  - [ ] src/index.js created and exports the main sync() function for use by external callers.
+  - [ ] CLI entry point (src/cli.js) properly invokes the main orchestrator from index.js.
 
 ### Phase 2: Processing
 
@@ -131,6 +133,15 @@ The plan stays aligned with the approved architecture:
   - [ ] Unsupported dynamic route patterns are surfaced as warnings rather than hard failures.
   - [ ] Generated Markdown and JSON use the same timestamp for a single run.
   - [ ] Integration tests cover the required end-to-end workflow and confirm the success/failure semantics mandated by the design.
+  - [ ] README.md created with clear documentation of:
+    - [ ] CLI usage examples showing --input, --output, and --report flags
+    - [ ] Expected JSDoc conventions for the tool to recognize endpoints
+    - [ ] Sample output from a Markdown API reference
+    - [ ] Sample output from a JSON coverage report
+    - [ ] List of supported static Express route patterns (app.METHOD, router.METHOD)
+    - [ ] Known Phase 1 limitations (dynamic routes not supported)
+  - [ ] npm run lint, npm run test, and coverage reporting all pass
+  - [ ] Project is ready for initial code review
 
 ## 3. Task List with Dependencies
 
