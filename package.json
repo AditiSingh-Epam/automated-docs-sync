@@ -1,0 +1,27 @@
+{
+  "name": "automated-docs-sync",
+  "version": "1.0.0",
+  "description": "Generate Markdown API documentation and coverage reports from Express routes and JSDoc.",
+  "main": "src/index.js",
+  "bin": {
+    "automated-docs-sync": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "test": "jest --runInBand",
+    "coverage": "jest --runInBand --coverage",
+    "test:coverage": "jest --runInBand --coverage",
+    "lint": "eslint src test"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.23.0",
+    "@babel/traverse": "^7.23.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "jest": "^29.7.0"
+  }
+}
