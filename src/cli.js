@@ -52,6 +52,13 @@ function runCli(argv, output = console) {
       return 0;
     }
     const result = sync(options);
+
+    // Check if sync succeeded before accessing report
+    if (!result.success) {
+      result.errors.forEach((error) => output.error(`Error: ${error}`));
+      return 1;
+    }
+
     result.warnings.forEach((warning) => output.warn(`Warning: ${warning}`));
     output.log(`Scanned ${result.report.totalEndpoints} endpoints; coverage ${result.report.coverage}%.`);
     output.log(`Documentation: ${result.summary.documentedEndpoints} documented, ${result.summary.partialEndpoints} partial, ${result.summary.missingDocumentation} missing.`);
