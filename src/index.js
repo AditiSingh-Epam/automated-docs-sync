@@ -1,90 +1,167 @@
 const fs = require('fs');
 const path = require('path');
-const { aggregateEndpoints } = require('./aggregator');
-const { analyzeFiles } = require('./endpointAnalyzer');
 const { discoverFiles } = require('./fileDiscovery');
-const { extractJSDoc } = require('./jsdocExtractor');
+const { analyzeFiles } = require('./endpointAnalyzer');
+const { extractJSDocMetadata } = require('./jsdocExtractor');
+const { aggregateDocumentation } = require('./aggregator');
 const { generateMarkdown } = require('./markdownGenerator');
 const { generateReport } = require('./reportGenerator');
 const { checkOutputCollisions, createTimestamp, writeOutput } = require('./utils');
 
-function validateOutputPath(outputPath, label) {
-  if (typeof outputPath !== 'string' || outputPath.trim() === '') {
-    throw new Error(`Missing ${label} output path.`);
+/**
+ * Validate that output path directory exists and is writable.
+ * @param {string} filePath - Output file path
+ * @param {string} argName - Argument name for error messages
+ * @throws {Error} If path is invalid
+ */
+function validateOutputPath(filePath, argName) {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    throw new Error(`Cannot access directory for ${argName}: ${dir}`);
   }
-  const resolved = path.resolve(outputPath);
-  const parent = path.dirname(resolved);
-  let parentStats;
-  try {
-    parentStats = fs.statSync(parent);
-  } catch (error) {
-    throw new Error(`Cannot access ${label} output directory "${parent}": ${error.message}`);
-  }
-  if (!parentStats.isDirectory()) {
-    throw new Error(`${label} output parent is not a directory: "${parent}"`);
-  }
-  if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
-    throw new Error(`${label} output path is a directory: "${resolved}"`);
-  }
-  return resolved;
 }
 
-function sync(options) {
-  if (!options || typeof options.input !== 'string' || options.input.trim() === '') {
-    throw new Error('Missing required --input directory.');
-  }
-  const markdownPath = validateOutputPath(options.output, '--output');
-  const reportPath = validateOutputPath(options.report, '--report');
-  if (markdownPath.toLowerCase() === reportPath.toLowerCase()) {
-    throw new Error('--output and --report must refer to different files.');
+/**
+ * Main synchronous API for documentation sync.
+ * @param {Object} config - Configuration object
+ * @param {string} config.input - Input directory path
+ * @param {string} config.output - Output Markdown file path
+ * @param {string} config.report - Output JSON report file path
+ * @param {string} [config.timestamp] - Optional ISO timestamp
+ * @returns {Object} Result with status, warnings, errors, and summary
+ * @throws {Error} On collision or validation failure
+ */
+function sync({ input, output, report, timestamp }) {
+  const finalTimestamp = timestamp || createTimestamp();
+  const warnings = [];
+  const errors = [];
+
+  // Validate output paths exist
+  try {
+    validateOutputPath(output, '--output');
+    validateOutputPath(report, '--report');
+  } catch (error) {
+    errors.push(error.message);
+    throw error;
   }
 
-  const timestamp = options.timestamp || createTimestamp();
-  const discovery = discoverFiles(options.input);
-  checkOutputCollisions(markdownPath, reportPath, discovery.files);
-  const analysis = analyzeFiles(discovery.files);
-  const documentedEndpoints = analysis.endpoints.map((endpoint) => ({
-    ...endpoint,
-    documentation: extractJSDoc(endpoint.jsdoc)
-  }));
-  const endpoints = aggregateEndpoints(documentedEndpoints);
-  const warnings = [...discovery.warnings, ...analysis.warnings];
+  // Check they're not the same
+  if (path.resolve(output) === path.resolve(report)) {
+    const err = new Error('--output and --report must point to different files');
+    errors.push(err.message);
+    throw err;
+  }
 
-  endpoints.forEach((endpoint) => {
-    if (endpoint.status !== 'documented') {
-      warnings.push(`${endpoint.status === 'missing' ? 'Missing' : 'Incomplete'} documentation for ${endpoint.method} ${endpoint.path} in "${endpoint.filePath}" at line ${endpoint.line}`);
+  // Step 1: Discover JavaScript files
+  let discoveryResult;
+  try {
+    discoveryResult = discoverFiles(input);
+  } catch (error) {
+    errors.push(`Failed to discover files in "${input}": ${error.message}`);
+    return {
+      success: false,
+      status: 'FAILED',
+      errors,
+      warnings
+    };
+  }
+
+  const discoveredFiles = discoveryResult.files || [];
+  warnings.push(...(discoveryResult.warnings || []));
+
+  // Step 2: Check for output collision
+  try {
+    checkOutputCollisions(output, report, discoveredFiles);
+  } catch (error) {
+    errors.push(error.message);
+    throw error;
+  }
+
+  // Step 3: Analyze endpoints
+  const analysis = analyzeFiles(discoveredFiles);
+  const endpoints = analysis.endpoints || [];
+  const allUnsupportedPatterns = analysis.unsupportedPatterns || [];
+
+  warnings.push(...(analysis.warnings || []));
+
+  // Step 4: Extract JSDoc metadata and attach to endpoints
+  const endpointsWithDocs = extractJSDocMetadata(endpoints);
+
+  // Step 5: Aggregate documentation
+  const aggregated = aggregateDocumentation(endpointsWithDocs);
+
+  // Generate warnings for missing/partial documentation
+  aggregated.forEach((ep) => {
+    if (ep.documentationStatus === 'notDocumented') {
+      warnings.push(`Missing documentation: ${ep.method} ${ep.path}`);
+    } else if (ep.documentationStatus === 'partial') {
+      warnings.push(`Incomplete documentation: ${ep.method} ${ep.path}`);
     }
   });
 
-  const markdown = generateMarkdown(endpoints, timestamp);
-  const status = warnings.length > 0 ? 'SUCCESS_WITH_WARNINGS' : 'SUCCESS';
-  const report = generateReport(endpoints, timestamp, {
-    warningCount: warnings.length,
-    unsupportedPatterns: analysis.unsupportedPatterns
-  });
-  writeOutput(markdownPath, markdown);
-  writeOutput(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  // Step 6: Generate Markdown
+  const markdown = generateMarkdown(aggregated, finalTimestamp);
+
+  // Step 7: Generate Report
+  let generatedReport = generateReport(
+      aggregated,
+      finalTimestamp,
+      allUnsupportedPatterns
+  );
+
+  // // Generate warnings for missing/partial documentation
+  // aggregated.forEach((ep) => {
+  //   if (ep.documentationStatus === 'notDocumented') {
+  //     warnings.push(`Missing documentation: ${ep.method} ${ep.path}`);
+  //   } else if (ep.documentationStatus === 'partial') {
+  //     warnings.push(`Incomplete documentation: ${ep.method} ${ep.path}`);
+  //   }
+  // });
+
+  // Update report status based on actual warnings
+  if (warnings.length > 0) {
+    generatedReport = {
+      ...generatedReport,
+      status: 'SUCCESS_WITH_WARNINGS',
+      warningCount: warnings.length
+    };
+  }
+
+  // Step 8: Write outputs
+
+  // Step 8: Write outputs
+  try {
+    writeOutput(output, markdown);
+    writeOutput(report, `${JSON.stringify(generatedReport, null, 2)}\n`);
+  } catch (writeError) {
+    errors.push(`Failed to write outputs: ${writeError.message}`);
+    return {
+      success: false,
+      status: 'FAILED',
+      errors,
+      warnings
+    };
+  }
 
   return {
-    endpoints,
-    report,
-    timestamp,
-    warnings,
+    success: true,
+    status: warnings.length > 0 ? 'SUCCESS_WITH_WARNINGS' : 'SUCCESS',
     warningCount: warnings.length,
-    status,
+    warnings,
     summary: {
-      endpointsDiscovered: endpoints.length,
-      documentedEndpoints: endpoints.filter((endpoint) => endpoint.status === 'documented').length,
-      partialEndpoints: endpoints.filter((endpoint) => endpoint.status === 'partial').length,
-      missingDocumentation: endpoints.filter((endpoint) => endpoint.status === 'missing').length,
-      coverage: report.coverage
+      endpointsDiscovered: aggregated.length,
+      documentedEndpoints: aggregated.filter(e => e.documentationStatus === 'documented').length,
+      partialEndpoints: aggregated.filter(e => e.documentationStatus === 'partial').length,
+      missingDocumentation: aggregated.filter(e => e.documentationStatus === 'notDocumented').length,
+      unsupportedPatternsCount: allUnsupportedPatterns.length,
+      coverage: parseInt(generatedReport.metadata.coverage)
     },
-    output: markdownPath,
-    reportPath
+    report: generatedReport
   };
 }
 
 module.exports = {
   sync,
-  validateOutputPath
+  validateOutputPath,
+  writeOutput
 };

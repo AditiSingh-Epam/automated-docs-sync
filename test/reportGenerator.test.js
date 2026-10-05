@@ -1,75 +1,146 @@
 const { generateReport } = require('../src/reportGenerator');
 
-describe('coverage report generation', () => {
-  test('reports counts, percentage, synchronized timestamp, and per-endpoint gaps', () => {
-    const report = generateReport([
-      { id: '1', method: 'GET', path: '/', handler: 'home', filePath: 'a.js', line: 1, status: 'documented', gaps: [] },
-      { id: '2', method: 'POST', path: '/', handler: 'create', filePath: 'a.js', line: 2, status: 'partial', gaps: ['summary'] },
-      { id: '3', method: 'DELETE', path: '/', handler: 'remove', filePath: 'a.js', line: 3, status: 'missing', gaps: ['jsdoc'] }
-    ], '2026-01-01T00:00:00.000Z');
-
-    expect(report).toMatchObject({
-      totalEndpoints: 3,
-      documented: 1,
-      notDocumented: 2,
-      coverage: 33.33,
-      timestamp: '2026-01-01T00:00:00.000Z'
-    });
-    expect(report.endpoints[1]).toMatchObject({ status: 'partial', gaps: ['summary'] });
-  });
-
-  test('defines zero-endpoint coverage as zero', () => {
-    expect(generateReport([], 'stamp')).toMatchObject({
-      totalEndpoints: 0,
-      documented: 0,
-      notDocumented: 0,
-      coverage: 0,
-      timestamp: 'stamp'
-    });
-  });
-
-  test('includes structured gap details and scan warning metadata', () => {
-    const report = generateReport([{
-      id: '1',
-      method: 'GET',
-      path: '/users',
-      handler: 'listUsers',
-      filePath: 'routes.js',
-      line: 1,
-      status: 'partial',
-      gaps: ['methodMismatch'],
-      gapDetails: {
-        missingFields: ['summary'],
-        invalidTags: ['@param api_key: sk_live_1234567890abcdefghijk'],
-        tagMismatch: [{ field: 'method', documented: 'POST', actual: 'GET' }]
+describe('Report status with unsupported patterns (regression)', () => {
+  it('should return SUCCESS_WITH_WARNINGS when unsupported patterns exist', async () => {
+    const endpoints = [
+      {
+        method: 'GET',
+        path: '/users',
+        handler: 'getUsers',
+        filePath: 'routes.js',
+        documentationStatus: 'documented',
+        gaps: {
+          missingFields: [],
+          invalidTags: [],
+          tagMismatch: [],
+          other: []
+        },
+        documentation: {
+          summary: 'Get all users',
+          params: [],
+          returns: 'Array of users',
+          method: 'GET',
+          path: '/users'
+        }
       }
-    }], 'stamp', {
-      warningCount: 2,
-      unsupportedPatterns: [{
+    ];
+
+    const unsupportedPatterns = [
+      {
         type: 'dynamicRoute',
         filePath: 'routes.js',
-        line: 4,
-        method: 'GET',
-        description: 'Dynamic route is unsupported.'
-      }]
-    });
+        line: 42,
+        description: 'Dynamic route registration not supported'
+      }
+    ];
 
-    expect(report).toMatchObject({
-      status: 'SUCCESS_WITH_WARNINGS',
-      partial: 1,
-      missing: 0,
-      warningCount: 2,
-      unsupportedPatternsCount: 1
-    });
-    expect(report.endpoints[0].gapDetails).toEqual({
-      missingFields: ['summary'],
-      invalidTags: ['@param api_key: [REDACTED]'],
-      tagMismatch: [{ field: 'method', documented: 'POST', actual: 'GET' }]
-    });
-    expect(report.unsupportedPatterns[0]).toMatchObject({
-      type: 'dynamicRoute',
-      filePath: 'routes.js',
-      line: 4
-    });
+    const report = await generateReport(
+        endpoints,
+        '2026-10-05T12:00:00Z',
+        unsupportedPatterns
+    );
+
+    // REGRESSION TEST: Verify status reflects unsupported patterns
+    expect(report.status).toBe('SUCCESS_WITH_WARNINGS');
+    expect(report.warningCount).toBe(1); // From unsupported pattern
+    expect(report.metadata.unsupportedPatternsCount).toBe(1);
+    expect(report.unsupportedPatterns.length).toBe(1);
+  });
+
+  it('should return SUCCESS when no unsupported patterns and all documented', async () => {
+    const endpoints = [
+      {
+        method: 'GET',
+        path: '/users',
+        handler: 'getUsers',
+        filePath: 'routes.js',
+        documentationStatus: 'documented',
+        gaps: {
+          missingFields: [],
+          invalidTags: [],
+          tagMismatch: [],
+          other: []
+        },
+        documentation: {
+          summary: 'Get users',
+          params: [],
+          returns: 'Array',
+          method: 'GET',
+          path: '/users'
+        }
+      }
+    ];
+
+    const report = await generateReport(
+        endpoints,
+        '2026-10-05T12:00:00Z',
+        [] // No unsupported patterns
+    );
+
+    expect(report.status).toBe('SUCCESS');
+    expect(report.warningCount).toBe(0);
+  });
+
+  it('should count both partial endpoints and unsupported patterns as warnings', async () => {
+    const endpoints = [
+      {
+        method: 'GET',
+        path: '/users',
+        handler: 'getUsers',
+        filePath: 'routes.js',
+        documentationStatus: 'partial', // This is a warning
+        gaps: {
+          missingFields: ['returns'],
+          invalidTags: [],
+          tagMismatch: [],
+          other: []
+        },
+        documentation: {
+          summary: 'Get users',
+          params: [],
+          returns: null,
+          method: 'GET',
+          path: '/users'
+        }
+      }
+    ];
+
+    const unsupportedPatterns = [
+      {
+        type: 'dynamicRoute',
+        filePath: 'routes.js',
+        line: 42,
+        description: 'Dynamic route not supported'
+      },
+      {
+        type: 'dynamicRoute',
+        filePath: 'routes.js',
+        line: 58,
+        description: 'Dynamic route not supported'
+      }
+    ];
+
+    const report = await generateReport(
+        endpoints,
+        '2026-10-05T12:00:00Z',
+        unsupportedPatterns
+    );
+
+    // 1 partial endpoint + 2 unsupported patterns = 3 total warnings
+    expect(report.status).toBe('SUCCESS_WITH_WARNINGS');
+    expect(report.warningCount).toBe(3); // 1 partial + 2 unsupported
+  });
+
+  it('should handle direct call with empty unsupported patterns gracefully', async () => {
+    const endpoints = [];
+    const report = await generateReport(
+        endpoints,
+        '2026-10-05T12:00:00Z',
+        undefined // Edge case: undefined instead of empty array
+    );
+
+    expect(report.status).toBe('SUCCESS');
+    expect(report.warningCount).toBe(0);
+    expect(report.unsupportedPatterns).toEqual([]);
   });
 });

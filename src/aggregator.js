@@ -1,3 +1,10 @@
+/**
+ * Aggregate endpoints with documentation analysis results.
+ * Enriches endpoint data with documentation status and gap tracking.
+ *
+ * @param {Array} endpoints - Analyzed endpoints with documentation metadata
+ * @returns {Array} Aggregated endpoints with status and gap details
+ */
 function aggregateEndpoints(endpoints) {
   return endpoints.map((endpoint) => {
     const documentation = endpoint.documentation || {
@@ -10,6 +17,7 @@ function aggregateEndpoints(endpoints) {
       invalidTags: [],
       gaps: ['jsdoc']
     };
+
     const gaps = [...(documentation.gaps || [])];
     const missingFields = [];
     const invalidTags = [...(documentation.invalidTags || [])];
@@ -39,11 +47,11 @@ function aggregateEndpoints(endpoints) {
       });
     }
 
-    const status = !documentation.present
-      ? 'missing'
-      : documentation.summary && !gaps.includes('invalidTags') && !gaps.includes('methodMismatch') && !gaps.includes('pathMismatch')
-        ? 'documented'
-        : 'partial';
+    const documentationStatus = !documentation.present
+        ? 'notDocumented'
+        : documentation.summary && !gaps.includes('invalidTags') && !gaps.includes('methodMismatch') && !gaps.includes('pathMismatch')
+            ? 'documented'
+            : 'partial';
 
     return {
       id: endpoint.id,
@@ -52,20 +60,26 @@ function aggregateEndpoints(endpoints) {
       handler: endpoint.handler,
       filePath: endpoint.filePath,
       line: endpoint.line,
-      summary: documentation.summary,
-      params: documentation.params,
-      returns: documentation.returns,
-      status,
-      gaps: [...new Set(gaps)],
-      gapDetails: {
+      documentationStatus,
+      documentation: {
+        present: documentation.present,
+        summary: documentation.summary,
+        params: documentation.params || [],
+        returns: documentation.returns || null,
+        method: documentation.method,
+        path: documentation.path
+      },
+      gaps: {
         missingFields,
         invalidTags,
-        tagMismatch
+        tagMismatch,
+        other: [...new Set(gaps)]
       }
     };
   });
 }
 
 module.exports = {
-  aggregateEndpoints
+  aggregateEndpoints,
+  aggregateDocumentation: aggregateEndpoints
 };

@@ -10,12 +10,12 @@ function associatedJSDoc(node, source) {
     return null;
   }
   const jsdoc = node.leadingComments
-    .filter((comment) => (
-      comment.type === 'CommentBlock'
-      && comment.value.startsWith('*')
-      && source.slice(comment.end, node.start).trim() === ''
-    ))
-    .pop();
+      .filter((comment) => (
+          comment.type === 'CommentBlock'
+          && comment.value.startsWith('*')
+          && source.slice(comment.end, node.start).trim() === ''
+      ))
+      .pop();
   return jsdoc ? jsdoc.value : null;
 }
 
@@ -83,11 +83,11 @@ function analyzeFile(filePath, sourceText) {
     },
     VariableDeclarator(path) {
       if (path.node.id.type === 'Identifier'
-        && ['ArrowFunctionExpression', 'FunctionExpression'].includes(path.node.init && path.node.init.type)) {
+          && ['ArrowFunctionExpression', 'FunctionExpression'].includes(path.node.init && path.node.init.type)) {
         declarations.set(path.node.id.name, {
           node: path.node.init,
           jsdoc: associatedJSDoc(path.node, source)
-            || associatedJSDoc(path.parentPath.node, source)
+              || associatedJSDoc(path.parentPath.node, source)
         });
       }
     }
@@ -96,18 +96,20 @@ function analyzeFile(filePath, sourceText) {
   const endpoints = [];
   const warnings = [];
   const unsupportedPatterns = [];
+
   traverse(ast, {
     CallExpression(callPath) {
       const { callee } = callPath.node;
       if (callee.type !== 'MemberExpression'
-        || callee.object.type !== 'Identifier'
-        || !['app', 'router'].includes(callee.object.name)) {
+          || callee.object.type !== 'Identifier'
+          || !['app', 'router'].includes(callee.object.name)) {
         return;
       }
 
       const methodName = !callee.computed && callee.property.type === 'Identifier'
-        ? callee.property.name.toLowerCase()
-        : null;
+          ? callee.property.name.toLowerCase()
+          : null;
+
       if (!methodName || !SUPPORTED_METHODS.has(methodName)) {
         if (callee.computed || methodName === 'route' || OTHER_HTTP_METHODS.has(methodName)) {
           const location = callPath.node.loc.start;
@@ -117,8 +119,8 @@ function analyzeFile(filePath, sourceText) {
             line: location.line,
             method: methodName ? methodName.toUpperCase() : 'dynamic',
             description: OTHER_HTTP_METHODS.has(methodName)
-              ? `Unsupported ${methodName.toUpperCase()} method is not inventoried in Phase 1.`
-              : 'Computed or unsupported route registration is not inventoried in Phase 1.'
+                ? `Unsupported ${methodName.toUpperCase()} method is not inventoried in Phase 1.`
+                : 'Computed or unsupported route registration is not inventoried in Phase 1.'
           };
           unsupportedPatterns.push(unsupported);
           warnings.push(`${unsupported.description} in "${filePath}" at line ${location.line}`);
@@ -128,6 +130,7 @@ function analyzeFile(filePath, sourceText) {
 
       const method = methodName.toUpperCase();
       const routePath = staticRoutePath(callPath.node.arguments[0]);
+
       if (routePath === null) {
         const location = callPath.node.loc.start;
         const unsupported = {
@@ -143,20 +146,24 @@ function analyzeFile(filePath, sourceText) {
       }
 
       const handlerNode = callPath.node.arguments.slice(1).reverse().find((argument) => (
-        ['FunctionExpression', 'ArrowFunctionExpression', 'Identifier'].includes(argument.type)
+          ['FunctionExpression', 'ArrowFunctionExpression', 'Identifier'].includes(argument.type)
       ));
+
       const declaration = handlerNode && handlerNode.type === 'Identifier'
-        ? declarations.get(handlerNode.name)
-        : null;
+          ? declarations.get(handlerNode.name)
+          : null;
+
       const resolvedHandler = declaration ? declaration.node : handlerNode;
       const handler = handlerNode && handlerNode.type === 'Identifier'
-        ? handlerNode.name
-        : functionName(handlerNode);
+          ? handlerNode.name
+          : functionName(handlerNode);
+
       const jsdoc = (declaration && declaration.jsdoc)
-        || associatedJSDoc(resolvedHandler, source)
-        || associatedJSDoc(handlerNode, source)
-        || associatedJSDoc(callPath.node, source)
-        || associatedJSDoc(callPath.parentPath.node, source);
+          || associatedJSDoc(resolvedHandler, source)
+          || associatedJSDoc(handlerNode, source)
+          || associatedJSDoc(callPath.node, source)
+          || associatedJSDoc(callPath.parentPath.node, source);
+
       const location = callPath.node.loc.start;
 
       endpoints.push({
@@ -178,12 +185,14 @@ function analyzeFiles(filePaths) {
   const endpoints = [];
   const warnings = [];
   const unsupportedPatterns = [];
+
   filePaths.forEach((filePath) => {
     const result = analyzeFile(filePath);
     endpoints.push(...result.endpoints);
     warnings.push(...result.warnings);
     unsupportedPatterns.push(...result.unsupportedPatterns);
   });
+
   return { endpoints, warnings, unsupportedPatterns };
 }
 

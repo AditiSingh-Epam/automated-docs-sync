@@ -1,57 +1,125 @@
-const fs = require('fs');
 const path = require('path');
 
-const KEY_VALUE_SECRET_PATTERN = /\b(password|passwd|secret|api[_-]?key|access[_-]?token|client[_-]?secret)\b(\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi;
-
+/**
+ * Create ISO timestamp.
+ */
 function createTimestamp() {
   return new Date().toISOString();
 }
 
-// Redacts a small set of common patterns; this is not a security boundary.
-function redactSecrets(value) {
-  return String(value)
-    .replace(/\bauthorization\s*:\s*bearer\s+[A-Za-z0-9._~+/=-]+/gi, '[REDACTED]')
-    .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, '[REDACTED]')
-    .replace(KEY_VALUE_SECRET_PATTERN, (match, label, separator) => (
-      `${label}${separator}[REDACTED]`
-    ))
-    .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[REDACTED]');
+/**
+ * Escape special Markdown characters.
+ * @param {string} text - Text to escape
+ * @returns {string} Escaped text safe for Markdown
+ */
+function escapeMarkdown(text) {
+  if (!text || typeof text !== 'string') return text;
+  // Escape pipes and convert newlines to <br>
+  return text.replace(/\|/g, '\\|').replace(/\n/g, '<br>');
 }
 
-function checkOutputCollisions(markdownPath, reportPath, discoveredFiles) {
-  const outputs = [
-    { path: markdownPath, label: 'Markdown output' },
-    { path: reportPath, label: 'JSON report' }
-  ];
-  const normalize = (filePath) => {
-    const resolved = path.resolve(filePath);
-    const canonical = fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
-    return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
-  };
-  const inputPaths = new Set(discoveredFiles.map(normalize));
+/**
+ * Write output to file.
+ * @param {string} filePath - Output file path
+ * @param {string} content - Content to write
+ */
+function writeOutput(filePath, content) {
+  const fs = require('fs');
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(filePath, content, 'utf8');
+}
 
-  outputs.forEach(({ path: outputPath, label }) => {
-    if (inputPaths.has(normalize(outputPath))) {
-      throw new Error(`${label} path collides with an input file: "${outputPath}". Choose a different output path.`);
-    }
+/**
+ * Redact common secret-like patterns from text.
+ * WARNING: This is BEST-EFFORT ONLY.
+ * @param {string} text - Text to redact
+ * @returns {string} Text with secrets redacted
+ */
+function redactSecrets(text) {
+  if (!text || typeof text !== 'string') return text;
+
+  let redacted = text;
+
+  // AWS Access Key IDs (AKIA...)
+  redacted = redacted.replace(/AKIA[0-9A-Z]{16}/g, '[REDACTED]');
+
+  // AWS Secret Access Keys
+  redacted = redacted.replace(/aws_secret_access_key\s*[:=]\s*['"]?[a-zA-Z0-9/+]{40}['"]?/gi, 'aws_secret_access_key=[REDACTED]');
+
+  // Bearer tokens (standalone or in headers) - match word boundary, Bearer, and any alphanumeric/dots/hyphens/underscores
+  redacted = redacted.replace(/\bBearer\s+[a-zA-Z0-9._-]+/gi, '[REDACTED]');
+  // API keys: api_key=value (any length)
+
+  redacted = redacted.replace(/\b(api[_-]?key)\s*[:=]\s*['"]?[a-zA-Z0-9\-._]+['"]?/gi, (match) => {
+    return match.replace(/[=:]\s*['"]?[a-zA-Z0-9\-._]+['"]?$/, '=[REDACTED]');
   });
+
+  // Passwords: password=value
+  redacted = redacted.replace(/\b(password|passwd|pwd)\s*[:=]\s*['"]?[^\s'"]+['"]?/gi, (match) => {
+    return match.replace(/[=:]\s*['"]?[^\s'"]+['"]?$/, '=[REDACTED]');
+  });
+
+  // Authorization headers with value
+  redacted = redacted.replace(/(authorization|auth)\s*[:=]\s*['"]?[^\s'"]+['"]?/gi, '$1=[REDACTED]');
+
+  // Generic secrets
+  redacted = redacted.replace(/\b(secret|token)\s*[:=]\s*['"]?[a-z0-9\-._]{20,}['"]?/gi, (match) => {
+    return match.replace(/[=:]\s*['"]?[a-z0-9\-._]{20,}['"]?$/, '=[REDACTED]');
+  });
+
+  // Connection strings
+  redacted = redacted.replace(/\bconnection[_-]?string\s*[:=]\s*['"]?[a-zA-Z0-9\-._:/@]{20,}['"]?/gi, 'connection_string=[REDACTED]');
+
+  // Private keys
+  redacted = redacted.replace(/-----BEGIN.*PRIVATE KEY-----/gi, '[REDACTED]');
+
+  // JWT tokens
+  redacted = redacted.replace(/eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, '[REDACTED]');
+
+  return redacted;
 }
 
-function escapeMarkdown(value) {
-  return redactSecrets(value)
-    .replace(/\r?\n/g, '<br>')
-    .replace(/\|/g, '\\|')
-    .trim();
-}
+/**
+ * Check if output paths would collide with scanned input files.
+ * @param {string} markdownPath - Path to Markdown output
+ * @param {string} reportPath - Path to JSON report output
+ * @param {string[]} discoveredFiles - List of scanned JavaScript files
+ * @throws {Error} If collision detected
+ */
+function checkOutputCollisions(markdownPath, reportPath, discoveredFiles) {
+  if (!markdownPath || !reportPath || !discoveredFiles) {
+    return;
+  }
 
-function writeOutput(filePath, contents) {
-  fs.writeFileSync(path.resolve(filePath), contents, 'utf8');
+  const resolvedMarkdown = path.resolve(markdownPath);
+  const resolvedReport = path.resolve(reportPath);
+
+  for (const file of discoveredFiles) {
+    const resolvedFile = path.resolve(file);
+
+    if (resolvedMarkdown === resolvedFile) {
+      throw new Error(
+          `Markdown output path collides with an input file: ${markdownPath}\n` +
+          'Choose a different output path (e.g., api-docs.md)'
+      );
+    }
+
+    if (resolvedReport === resolvedFile) {
+      throw new Error(
+          `JSON report path collides with an input file: ${reportPath}\n` +
+          'Choose a different output path (e.g., api-coverage.json)'
+      );
+    }
+  }
 }
 
 module.exports = {
   createTimestamp,
-  checkOutputCollisions,
   escapeMarkdown,
+  writeOutput,
   redactSecrets,
-  writeOutput
+  checkOutputCollisions
 };

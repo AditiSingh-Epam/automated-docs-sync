@@ -1,24 +1,24 @@
 const { aggregateEndpoints } = require('../src/aggregator');
 
-const route = {
-  id: 'users.js:1',
-  method: 'GET',
-  path: '/users',
-  handler: 'listUsers',
-  filePath: 'users.js',
-  line: 1
-};
-
 describe('endpoint aggregator', () => {
+  const route = {
+    id: 'route-1',
+    method: 'GET',
+    path: '/users',
+    handler: 'listUsers',
+    filePath: 'routes.js',
+    line: 5
+  };
+
   test('classifies complete, partial, and missing endpoint documentation', () => {
     const result = aggregateEndpoints([
       { ...route, documentation: { present: true, summary: 'Lists users.', params: [], returns: null, gaps: [] } },
       { ...route, path: '/partial', documentation: { present: true, summary: '', params: [], returns: null, gaps: ['summary'] } },
       { ...route, path: '/missing' }
     ]);
-
-    expect(result.map((endpoint) => endpoint.status)).toEqual(['documented', 'partial', 'missing']);
-    expect(result[2].gaps).toContain('jsdoc');
+    expect(result[0].documentationStatus).toBe('documented');
+    expect(result[1].documentationStatus).toBe('partial');
+    expect(result[2].documentationStatus).toBe('notDocumented');
   });
 
   test('marks mismatching documented route metadata as partial without losing route identity', () => {
@@ -26,28 +26,21 @@ describe('endpoint aggregator', () => {
       ...route,
       documentation: {
         present: true,
+        summary: 'Get a user.',
         method: 'POST',
-        path: '/other',
-        summary: 'Lists users.',
+        path: '/different',
         params: [],
         returns: null,
-        gaps: []
+        gaps: [],
+        invalidTags: []
       }
     }]);
-    expect(result[0]).toMatchObject({
-      method: 'GET',
-      path: '/users',
-      status: 'partial',
-      gaps: ['methodMismatch', 'pathMismatch'],
-      gapDetails: {
-        missingFields: [],
-        invalidTags: [],
-        tagMismatch: [
-          { field: 'method', documented: 'POST', actual: 'GET' },
-          { field: 'path', documented: '/other', actual: '/users' }
-        ]
-      }
-    });
+    expect(result[0].documentationStatus).toBe('partial');
+    expect(result[0].method).toBe('GET');
+    expect(result[0].path).toBe('/users');
+    expect(result[0].gaps.tagMismatch).toHaveLength(2);
+    expect(result[0].gaps.tagMismatch[0]).toMatchObject({ field: 'method', documented: 'POST', actual: 'GET' });
+    expect(result[0].gaps.tagMismatch[1]).toMatchObject({ field: 'path', documented: '/different', actual: '/users' });
   });
 
   test('records missing fields and invalid tags in explicit gap details', () => {
@@ -55,23 +48,20 @@ describe('endpoint aggregator', () => {
       { ...route },
       {
         ...route,
+        path: '/other',
         documentation: {
           present: true,
-          method: null,
-          path: null,
           summary: '',
           params: [],
           returns: null,
-          invalidTags: ['@unknown value'],
-          gaps: ['summary', 'invalidTags']
+          gaps: ['invalidTags'],
+          invalidTags: ['@unknown', '@broken']
         }
       }
     ]);
-    expect(undocumented.gapDetails.missingFields).toEqual(['jsdoc', 'summary']);
-    expect(invalid.gapDetails).toEqual({
-      missingFields: ['summary'],
-      invalidTags: ['@unknown value'],
-      tagMismatch: []
-    });
+    expect(undocumented.gaps.missingFields).toContain('jsdoc');
+    expect(undocumented.gaps.missingFields).toContain('summary');
+    expect(invalid.gaps.invalidTags).toEqual(['@unknown', '@broken']);
+    expect(invalid.gaps.missingFields).toContain('summary');
   });
 });

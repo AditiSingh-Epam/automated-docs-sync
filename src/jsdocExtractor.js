@@ -1,9 +1,9 @@
 function cleanLines(comment) {
   return String(comment || '')
-    .replace(/^\s*\*/, '')
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*\* ?/, '').trim())
-    .filter((line) => line.length > 0);
+      .replace(/^\s*\*/, '')
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s*\* ?/, '').trim())
+      .filter((line) => line.length > 0);
 }
 
 function parseParam(line) {
@@ -85,6 +85,24 @@ function extractJSDoc(comment) {
   return result;
 }
 
+/**
+ * Extract and attach JSDoc metadata to endpoints.
+ * Takes endpoints with raw jsdoc text and returns them with parsed documentation.
+ *
+ * @param {Array} endpoints - Endpoints with jsdoc field
+ * @returns {Array} Endpoints with attached documentation field
+ */
+function extractJSDocMetadata(endpoints) {
+  return endpoints.map((endpoint) => {
+    const documentation = extractJSDoc(endpoint.jsdoc);
+    return {
+      ...endpoint,
+      documentation
+    };
+  });
+}
+
 module.exports = {
-  extractJSDoc
+  extractJSDoc,
+  extractJSDocMetadata
 };
