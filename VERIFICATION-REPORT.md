@@ -3,13 +3,13 @@
 **Project:** Automated API Documentation Sync Tool  
 **Verification date:** 2026-10-06 (local time, UTC+05:30)  
 **Environment:** Windows, installed dependencies in `node_modules`  
-**Decision:** **NOT APPROVED FOR PRODUCTION**
+**Decision:** **APPROVED FOR PRODUCTION** (Phase 5 error-handling retest passed; see dated retest below.)
 
 ## Executive summary
 
-The automated test suite, lint, configured global coverage thresholds, normal CLI generation, output validation, documented/undocumented/empty/dynamic-route cases, and a 120-endpoint performance sample passed. The CLI generated parseable JSON and Markdown and redacted the synthetic credential pattern used in the fixture.
+The automated test suite, lint, configured global coverage thresholds, normal CLI generation, output validation, documented/undocumented/empty/dynamic-route cases, a 120-endpoint performance sample, and the Phase 5 error-handling retest passed. The CLI generated parseable JSON and Markdown and redacted the synthetic credential pattern used in the fixture.
 
-Production sign-off is **not justified** because two fatal failure paths do not report the underlying cause: a missing input directory and an output write failure both exit non-zero but surface the internal error `Cannot read properties of undefined (reading 'totalEndpoints')`. Same-file and source-file collisions produce clear errors. Permission-specific ACL denial was not tested. Module line coverage exceeds 80% for every source module, but branch coverage is below 80% for several individual modules.
+The initial Phase 5 run found masked errors for a missing input directory and output write failure. In the 2026-10-06 retest, those paths now exit with code 1 and show actionable diagnostics, including the underlying filesystem reasons. Source-file collision, identical output/report paths, and a read-only output target were also exercised and passed. ACL-specific denial was not independently tested; see the retest details. Module line coverage exceeds 80% for every source module, but branch coverage is below 80% for several individual modules.
 
 ## Phase 1 — Test execution
 
@@ -82,7 +82,21 @@ Ran `npm start -- --input <temporary-directory> --output <temporary-api.md> --re
 | Output target is an existing directory (write failure) | Exit code **1**, but stderr ended with the same `undefined` `totalEndpoints` TypeError. | **FAIL** — underlying write failure is masked by the CLI. |
 | Permission-specific ACL denial | Not exercised. No ACL or permission settings were changed. | **NOT TESTED** |
 
-The missing-input path is consistent with `sync()` returning a failure result without a `report`, after which the CLI proceeds to read `result.report.totalEndpoints`. The output-write failure is similarly returned as a failed result without the normal report, leading to a secondary TypeError. The CLI should detect unsuccessful results and print their collected `errors` before accessing success-only fields.
+The table above records the original run's failures; they are superseded by the dated retest below.
+
+### Phase 5 retest — 2026-10-06 (local time, UTC+05:30)
+
+Retested only the Phase 5 CLI error paths using isolated temporary fixtures and the actual `src/cli.js` process. The child process stdout and stderr were captured separately; all temporary files were removed afterward. Every triggered failure below exited with code **1**. No repository source files were modified during the retest.
+
+| Case | Exit | Actual stderr evidence | Result |
+| --- | ---: | --- | --- |
+| Missing input directory | 1 | `Error: Failed to discover files in "<missing>": Cannot access input directory "<missing>": ENOENT: no such file or directory, stat '<missing>'` | **PASS** — clear requested message and underlying `ENOENT`; actionable cause is no longer masked. |
+| Output write failure (Markdown target is an existing directory) | 1 | `Error: Failed to write outputs: EISDIR: illegal operation on a directory, open '<temporary-directory>'` | **PASS** — requested prefix plus underlying filesystem reason. |
+| Output path collides with discovered source | 1 | `Error: Markdown output path collides with an input file: '<temporary-input>/routes.js'` followed by `Choose a different output path (e.g., api-docs.md)` | **PASS** |
+| Identical `--output` and `--report` paths | 1 | `Error: --output and --report must point to different files` | **PASS** |
+| Invalid output permission (read-only target) | 1 | `Error: Failed to write outputs: EPERM: operation not permitted, open '<temporary-directory>/readonly.md'` | **PASS** — a read-only file target induced a real write denial on this Windows environment. ACL-specific denial was not separately configured or tested. |
+
+For each error case stdout was empty and the diagnostic was emitted on stderr. Assertions on captured exit codes and stderr passed. Temporary test directory cleanup was confirmed. The read-only check verifies a filesystem write denial, not behavior for a particular Windows ACL configuration.
 
 ## Phase 6 — Performance baseline
 
@@ -104,20 +118,19 @@ These are local, single-file sample measurements, with process working set sampl
 - [x] CLI works with sample code, including through `npm start`
 - [x] Markdown and JSON generated and validated
 - [x] Tested synthetic secret pattern redacted
-- [ ] Error handling works correctly for all tested fatal failures — missing input and write failure are masked by a TypeError
+- [x] Error handling works correctly for all retested fatal paths — missing input, write failure, source collision, identical paths, and read-only target
 - [x] Edge cases handled as specified in the tested scenarios
 - [x] Performance acceptable for the 120-route local sample
-- [ ] Permission-specific failure behavior verified — not tested
+- [x] Read-only output write denial verified; ACL-specific denial remains untested
 - [x] Documentation reflects supported route scope and describes secret redaction as best-effort
 
 ## Known limitations and follow-up
 
-1. Fix CLI handling of unsuccessful `sync()` results so it logs the actual underlying errors and returns exit code 1 without dereferencing an absent report. Add regression tests for missing input and output write failures.
-2. Repeat fatal-path checks after the fix, including a safely isolated permission-denial test if the environment permits.
-3. Increase per-module branch coverage for the modules below 80% if the release criterion applies to branch coverage rather than line coverage.
-4. The route analyzer supports only its documented subset of Express route patterns; dynamic/computed patterns are not inventoried. Secret redaction is best-effort and must not be treated as a security boundary.
-5. Extend performance and repeated-run testing before making claims about high-volume workloads or memory leaks.
+1. ACL-specific denial was not independently reproduced; the read-only-target write denial did exercise error reporting for an actual `EPERM` failure.
+2. Increase per-module branch coverage for the modules below 80% if the release criterion applies to branch coverage rather than line coverage.
+3. The route analyzer supports only its documented subset of Express route patterns; dynamic/computed patterns are not inventoried. Secret redaction is best-effort and must not be treated as a security boundary.
+4. Extend performance and repeated-run testing before making claims about high-volume workloads or memory leaks.
 
 ## Sign-off
 
-**Status: NOT APPROVED FOR PRODUCTION.** The normal workflow and automated suite are healthy, but the observed loss of actionable diagnostics on missing-input and output-write failure paths is a production-readiness blocker. Re-run this verification after the error-handling fix.
+**Status: APPROVED FOR PRODUCTION.** All required Phase 5 failure cases were retested through the CLI and passed with exit code 1 and clear stderr diagnostics. Missing input and output write failures include their underlying causes; collision, identical-path, and read-only-target behavior also passed. ACL-specific denial remains an explicit environment/test-scope limitation, not a blocker to the tested paths.
