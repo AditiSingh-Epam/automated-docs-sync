@@ -1,3 +1,5 @@
+const { redactSecrets } = require('./utils');
+
 /**
  * Generate JSON coverage report with per-endpoint gap details.
  * Accounts for unsupported patterns in status and warning count.
@@ -36,12 +38,15 @@ function generateReport(endpoints, timestamp, unsupportedPatterns = []) {
     generatedAt: timestamp,
     warningCount,
 
-    // Top-level fields (for test compatibility)
+    // Top-level fields (match README schema)
     coverage,
     totalEndpoints: safeEndpoints.length,
     unsupportedPatternsCount: safePatterns.length,
+    documented,
+    partial,
+    notDocumented,
 
-    // Metadata section
+    // Metadata section (backward compatibility)
     metadata: {
       timestamp,
       totalEndpoints: safeEndpoints.length,
@@ -61,7 +66,7 @@ function generateReport(endpoints, timestamp, unsupportedPatterns = []) {
       documentationStatus: ep.documentationStatus,
       status: ep.documentationStatus === 'notDocumented' ? 'missing' : ep.documentationStatus,
 
-      // Rich gap details (Issue #1 fix)
+      // Rich gap details
       gaps: {
         missingFields: ep.gaps?.missingFields || [],
         invalidTags: ep.gaps?.invalidTags || [],
@@ -69,11 +74,27 @@ function generateReport(endpoints, timestamp, unsupportedPatterns = []) {
         other: ep.gaps?.other || []
       },
 
-      // Documentation metadata
-      documentation: ep.documentation || {}
+      // Documentation metadata - ALL REDACTED
+      documentation: {
+        present: ep.documentation?.present,
+        summary: redactSecrets(ep.documentation?.summary || ''),
+        params: (ep.documentation?.params || []).map(p => ({
+          name: p.name,
+          type: p.type,
+          description: redactSecrets(p.description || '')
+        })),
+        returns: ep.documentation?.returns
+            ? {
+              type: ep.documentation.returns.type,
+              description: redactSecrets(ep.documentation.returns.description || '')
+            }
+            : null,
+        method: ep.documentation?.method,
+        path: ep.documentation?.path
+      }
     })),
 
-    // Unsupported patterns for transparency (Issue #6 fix)
+    // Unsupported patterns for transparency
     unsupportedPatterns: safePatterns.map(p => ({
       type: p.type,
       filePath: p.filePath,

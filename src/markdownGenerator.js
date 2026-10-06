@@ -10,7 +10,7 @@ function renderParams(params) {
     return '';
   }
   return params
-      .map(p => `\`${p.type || 'unknown'}\` \`${p.name}\`: ${p.description || 'No description'}`)
+      .map(p => `\`${p.type || 'unknown'}\` \`${p.name}\`: ${redactSecrets(p.description || 'No description')}`)
       .join('\n');
 }
 
@@ -24,9 +24,9 @@ function renderReturns(returns) {
     return '';
   }
   if (typeof returns === 'string') {
-    return returns;
+    return redactSecrets(returns);
   }
-  return `\`${returns.type || 'unknown'}\`: ${returns.description || ''}`;
+  return `\`${returns.type || 'unknown'}\`: ${redactSecrets(returns.description || '')}`;
 }
 
 /**
@@ -138,8 +138,9 @@ function generateMarkdown(endpoints, timestamp) {
         lines.push('**Parameters:**');
         lines.push('');
         for (const param of ep.documentation.params) {
-          const paramLine = `\`${param.type || 'unknown'}\` \`${param.name}\`: ${param.description || 'No description'}`;
-          lines.push(paramLine);
+          const paramName = escapeMarkdown(param.name || '');
+          const paramDesc = redactSecrets(param.description || 'No description');
+          lines.push(`- \`${param.type || 'unknown'}\` \`${paramName}\`: ${escapeMarkdown(paramDesc)}`);
         }
         lines.push('');
       }
@@ -150,9 +151,10 @@ function generateMarkdown(endpoints, timestamp) {
         lines.push('**Returns:**');
         lines.push('');
         if (typeof returns === 'string') {
-          lines.push(`\`${returns}\``);
+          lines.push(`\`${escapeMarkdown(redactSecrets(returns))}\``);
         } else {
-          lines.push(`\`${returns.type || 'unknown'}\`: ${returns.description || ''}`);
+          const returnDesc = redactSecrets(returns.description || '');
+          lines.push(`\`${returns.type || 'unknown'}\`: ${escapeMarkdown(returnDesc)}`);
         }
         lines.push('');
       }
